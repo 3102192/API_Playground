@@ -5,7 +5,6 @@
   "n": 24,
   "passed": 24,
   "ok": true,
-  "run_out_sha256": "6b77e40b84544680db70cc9bfdb15080db40a711cdfbf2aaa98d8216ea84afe3",
   "rows": [
     {
       "case_id": "KEY-ABSENT-EXISTENCE-FIRST",

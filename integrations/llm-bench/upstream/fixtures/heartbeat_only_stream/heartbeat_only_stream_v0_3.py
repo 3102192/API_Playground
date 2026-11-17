@@ -669,7 +669,6 @@ def main() -> int:
             }
         )
     payload = json.dumps({"fixtures": rows}, sort_keys=True, ensure_ascii=False)
-    digest = hashlib.sha256(payload.encode()).hexdigest()
     out = {
         "fixture": "HEARTBEAT_ONLY_STREAM",
         "version": "v0.3",
@@ -677,7 +676,6 @@ def main() -> int:
         "n": len(rows),
         "passed": sum(1 for r in rows if r["match"]),
         "ok": ok,
-        "run_out_sha256": digest,
         "rows": rows,
     }
     print(json.dumps(out, ensure_ascii=False, indent=2))

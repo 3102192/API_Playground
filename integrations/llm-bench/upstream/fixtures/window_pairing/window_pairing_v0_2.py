@@ -705,8 +705,6 @@ def run_all() -> dict[str, Any]:
         "failed": len(CASES) - passed,
         "results": results,
     }
-    blob = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    payload["run_out_sha256"] = hashlib.sha256(blob).hexdigest()
     return payload
 
 
