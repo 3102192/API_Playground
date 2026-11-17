@@ -354,6 +354,5 @@
     "RATIO_CONSTRAINT",
     "PRIORITY_TABLE"
   ],
-  "run_out_sha256": "a51ef868566adc5a6f828723cf4fbd0040bf573407aab56a59c70887fc2710f3",
-  "script_sha256": "453f40e965e62feb4211fda264133a7c125468122b8af95dfafb34198daf6dba"
+  "script_sha256": "fafd99f9ddebc776ae4582b10f420bbe0e613e3c50d97660c60c5531f25a8d62"
 }

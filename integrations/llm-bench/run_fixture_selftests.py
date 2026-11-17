@@ -122,19 +122,57 @@ def collect_jobs() -> list[tuple[str, Path, Path]]:
     return jobs
 
 
-def verify_receipts(receipts: list[Receipt], strict: bool) -> tuple[list[str], list[str]]:
+self_hash_field_re = re.compile(rb'"([A-Za-z0-9_\-]*sha256[A-Za-z0-9_\-]*)"\s*:\s*"([0-9a-fA-F]{64})"')
+SELF_REFERENTIAL_FIELD_RE = self_hash_field_re
+
+
+def self_referential_fields(path: Path, expected: str) -> list[str]:
+    """Fields inside the artifact whose value equals the hash the META declares.
+
+    That equality is the copy-paste signature: instead of hashing the artifact,
+    the META took a digest the artifact carries about itself. The value then
+    describes an internal payload, not the file that holds it, so no third party
+    can ever recompute it from the bytes on disk.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return []
+    return [
+        field.decode()
+        for field, value in SELF_REFERENTIAL_FIELD_RE.findall(raw)
+        if value.decode().lower() == expected
+    ]
+
+
+def verify_receipts(receipts: list[Receipt], strict: bool) -> tuple[list[str], list[str], list[str]]:
     """Compare every declared artifact hash with the artifact the run left behind.
 
     A META that declares hash_norm states which bytes it hashed, so a mismatch is
     a failed fixture. Without hash_norm the declared value may describe an
     internal payload rather than the file, so a mismatch is reported instead of
     enforced; --strict-hashes turns those reports into failures.
+
+    A declared hash that the artifact also carries as its own field is neither:
+    that receipt is a fixture fault (SELF_REFERENTIAL_HASH). It can never verify,
+    so it is reported per item and kept out of the PASS denominator instead of
+    silently counting as verified.
     """
     notes: list[str] = []
     failures: list[str] = []
+    faults: list[str] = []
     for receipt in receipts:
         if not receipt.artifact.is_file():
             failures.append(f"{receipt.meta.name}: declares a hash but {receipt.artifact.name} is missing")
+            continue
+        self_fields = self_referential_fields(receipt.artifact, receipt.expected)
+        if self_fields:
+            faults.append(
+                f"SELF_REFERENTIAL_HASH {receipt.meta.name}: {receipt.artifact.name} carries "
+                f"{', '.join(self_fields)} = the declared receipt, so the declared value describes "
+                f"an internal payload instead of the file that holds it (FIXTURE_FAULT; excluded "
+                f"from the PASS denominator)"
+            )
             continue
         candidates = digest_candidates(receipt.artifact)
         hit = next((name for name, digest in candidates.items() if digest == receipt.expected), None)
@@ -150,11 +188,12 @@ def verify_receipts(receipts: list[Receipt], strict: bool) -> tuple[list[str], l
             failures.append(detail + (f" [hash_norm: {receipt.norm}]" if receipt.norm else ""))
         else:
             notes.append("hash unverifiable: " + detail + " - no hash_norm line")
-    return notes, failures
+    return notes, failures, faults
 
 
 def main(argv: list[str]) -> int:
     strict = "--strict-hashes" in argv
+    verbose = "--verbose" in argv or "-v" in argv
     if not ROOT.is_dir():
         print(f"fixtures root missing: {ROOT}", file=sys.stderr)
         return 2
@@ -165,6 +204,7 @@ def main(argv: list[str]) -> int:
         return 2
 
     failed: list[str] = []
+    passed: list[str] = []
     ran: dict[Path, str] = {}
     for label, script, fixdir in jobs:
         proc = subprocess.run(
@@ -178,31 +218,56 @@ def main(argv: list[str]) -> int:
             tail = (proc.stdout + proc.stderr).strip()[-800:]
             print(f"FAIL {label} (exit {proc.returncode})\n{tail}\n", file=sys.stderr)
             continue
-        print(f"ok   {label}")
+        passed.append(label)
         ran.setdefault(fixdir, label)
 
     # Every script has run, so compare receipts with what the run left on disk:
     # a fixture that rewrites its own artifact can no longer stay green.
     verified = unverifiable = 0
+    faults: list[str] = []
+    exempt: dict[Path, str] = {}
     for fixdir, label in sorted(ran.items()):
         receipts = receipts_for(fixdir, sorted(fixdir.glob("META*.txt")))
-        notes, bad = verify_receipts(receipts, strict)
+        notes, bad, fault = verify_receipts(receipts, strict)
         verified += sum(1 for note in notes if note.startswith("hash ok"))
         unverifiable += sum(1 for note in notes if note.startswith("hash unverifiable"))
         if bad:
             failed.append(f"{label} (receipt)")
             print(f"FAIL {label} (receipt)\n  " + "\n  ".join(bad) + "\n", file=sys.stderr)
             continue
-        for note in notes:
-            if not note.startswith("hash ok"):
+        if fault:
+            exempt[fixdir] = label
+            faults.extend(fault)
+            continue
+        if verbose:
+            for note in notes:
                 print(f"     {note}")
 
-    print(f"\n{len(jobs) - len(failed)}/{len(jobs)} fixture selftests passed")
-    print(f"hash receipts: {verified} verified, {unverifiable} unverifiable (no hash_norm, no normalization match)")
+    # Print the exceptions by name and the routine passes only as a count:
+    # a green run needs no per-item proof, a red run needs the exact items.
+    if failed:
+        print(f"failed: {len(failed)}")
+        for label in failed:
+            print(f"  FAIL {label}")
+    if faults:
+        print(f"\nfixture faults: {len(faults)} (SELF_REFERENTIAL_HASH, excluded from the PASS denominator)")
+        for line in faults:
+            print(f"  {line}")
+    if verbose:
+        print(f"passed: {len(passed)}")
+        for label in passed:
+            print(f"  ok   {label}")
+
+    denom = len(jobs) - len(exempt)
+    print(f"\n{denom - len(failed)}/{denom} fixture selftests passed")
+    print(
+        f"hash receipts: {verified} verified, {unverifiable} unverifiable (no hash_norm, no normalization match), "
+        f"{len(faults)} self-referential (fixture fault, out of denominator)"
+    )
     if strict and unverifiable:
         print("--strict-hashes: treating unverifiable receipts as failures", file=sys.stderr)
         return 1
-    return 1 if failed else 0
+    return 1 if failed or faults else 0
 
 
 if __name__ == "__main__":

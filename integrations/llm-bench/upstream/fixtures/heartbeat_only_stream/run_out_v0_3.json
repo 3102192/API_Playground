@@ -5,7 +5,6 @@
   "n": 20,
   "passed": 20,
   "ok": true,
-  "run_out_sha256": "474f46a82d29a8d35fcfddcd5d8a4379b168bdd7a843147a0608f70f7a6d58cd",
   "rows": [
     {
       "case_id": "HB-COUNT-STRING-ZERO",
